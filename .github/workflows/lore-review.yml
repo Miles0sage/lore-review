@@ -17,25 +17,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install lore-review from source
-        run: pip install -e .
+      - name: Install lore-review
+        run: pip install lore-review
 
       - name: Get PR diff
         run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
 
       - name: Run lore-review (GitHub annotations + fail on CRITICAL)
+        id: review
         run: |
           lore-review \
             --repo . \
             --diff /tmp/pr.diff \
             --pr-id ${{ github.event.number }} \
             --format github \
-            --fail-on critical \
-            2>&1 | tee /tmp/review_annotations.txt
-          # Capture exit code before tee swallows it
-          exit ${PIPESTATUS[0]}
+            --fail-on critical
+        continue-on-error: true
 
-      - name: Run lore-review JSON (for PR comment)
+      - name: Run lore-review JSON (for inline review)
         if: always()
         run: |
           lore-review \
@@ -46,45 +45,89 @@ jobs:
             --fail-on never \
             > /tmp/review.json || true
 
-      - name: Post PR comment
+      - name: Post inline PR review
         if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const result = JSON.parse(fs.readFileSync('/tmp/review.json', 'utf8'));
-            const findings = result.verdict.findings;
-            const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+            let result;
+            try {
+              result = JSON.parse(fs.readFileSync('/tmp/review.json', 'utf8'));
+            } catch (e) {
+              console.log('No review.json found, skipping comment');
+              return;
+            }
+
+            const findings = result.verdict.findings || [];
+            const counts = {};
             findings.forEach(f => counts[f.severity] = (counts[f.severity] || 0) + 1);
 
-            const rows = findings.slice(0, 20).map(f => {
-              const icon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵', info: '⚪' }[f.severity] || '⚪';
-              return `| ${icon} ${f.severity.toUpperCase()} | ${f.file_path}:${f.line_start} | ${f.message} |`;
+            const hasCritical = (counts.critical || 0) > 0;
+            const statusLine = hasCritical
+              ? '❌ **FAILED** — CRITICAL findings block merge.'
+              : '✅ **PASSED** — No critical issues.';
+
+            // Build inline comments for CRITICAL and HIGH only (avoid noise)
+            const severityIcon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+            const inlineComments = findings
+              .filter(f => ['critical', 'high'].includes(f.severity))
+              .slice(0, 30)
+              .map(f => ({
+                path: f.file_path,
+                line: f.line_start || 1,
+                side: 'RIGHT',
+                body: [
+                  `${severityIcon[f.severity] || '⚪'} **${f.severity.toUpperCase()}** — ${f.category}`,
+                  '',
+                  f.message,
+                ].join('\n'),
+              }));
+
+            // Summary body for the review
+            const tableRows = findings.slice(0, 15).map(f => {
+              const icon = severityIcon[f.severity] || '⚪';
+              return `| ${icon} ${f.severity.toUpperCase()} | \`${f.file_path}:${f.line_start}\` | ${f.message.slice(0, 80)} |`;
             }).join('\n');
 
-            const hasCritical = counts.critical > 0;
-            const statusLine = hasCritical ? '❌ **FAILED** — CRITICAL findings block merge.' : '✅ **PASSED** — No critical issues.';
-
-            const body = [
+            const summaryBody = [
               '## 🔍 Lore Review',
               '',
               statusLine,
               '',
-              `**Findings:** ${findings.length} issues (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium)`,
-              `**Darwin rules applied:** ${result.verdict.immunity_rules_applied}`,
-              `**Cost:** $${result.total_cost_usd.toFixed(4)}`,
+              `**${findings.length} findings** — ${counts.critical || 0} critical · ${counts.high || 0} high · ${counts.medium || 0} medium`,
+              `**Darwin rules applied:** ${result.verdict?.immunity_rules_applied || 0}`,
+              `**Cost:** $${(result.total_cost_usd || 0).toFixed(4)}`,
               '',
               findings.length > 0
-                ? '| Severity | File | Issue |\n|----------|------|-------|\n' + rows
-                : '✅ No issues found.',
+                ? '| Severity | Location | Issue |\n|----------|----------|-------|\n' + tableRows
+                : '_No issues found._',
               '',
-              '*Powered by [lore-review](https://github.com/Miles0sage/lore-review) — gets smarter with every PR*'
+              '*Powered by [lore-review](https://github.com/Miles0sage/lore-review) — gets smarter with every PR*',
             ].join('\n');
 
-            github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
-            });
+            // Post as a proper pull request review with inline comments
+            try {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                event: hasCritical ? 'REQUEST_CHANGES' : 'COMMENT',
+                body: summaryBody,
+                comments: inlineComments,
+              });
+            } catch (reviewErr) {
+              // If inline comments fail (e.g. line not in diff), fall back to plain comment
+              console.log('Inline review failed, falling back to comment:', reviewErr.message);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: summaryBody,
+              });
+            }
+
+      - name: Fail if CRITICAL found
+        if: steps.review.outcome == 'failure'
+        run: exit 1
