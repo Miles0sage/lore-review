@@ -1,6 +1,6 @@
 [project]
 name = "lore-review"
-version = "0.3.2"
+version = "0.3.3"
 description = "The code reviewer that knows your codebase — and gets smarter every time it's wrong"
 requires-python = ">=3.11"
 dependencies = [

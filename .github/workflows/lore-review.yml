@@ -26,20 +26,18 @@ jobs:
       - name: Run lore-review (GitHub annotations + fail on CRITICAL)
         id: review
         run: |
-          lore-review \
+          lore-review scan /tmp/pr.diff \
             --repo . \
-            --diff /tmp/pr.diff \
             --pr-id ${{ github.event.number }} \
-            --format github \
+            --output github \
             --fail-on critical
         continue-on-error: true
 
       - name: Run lore-review JSON (for inline review)
         if: always()
         run: |
-          lore-review \
+          lore-review scan /tmp/pr.diff \
             --repo . \
-            --diff /tmp/pr.diff \
             --pr-id ${{ github.event.number }} \
             --output json \
             --fail-on never \
