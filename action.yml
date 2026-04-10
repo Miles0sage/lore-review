@@ -9,19 +9,41 @@ inputs:
     description: 'Path to repository'
     required: false
     default: '.'
+  fail-on:
+    description: 'Fail check if findings reach this severity: critical|high|medium|low|info|never'
+    required: false
+    default: 'critical'
 runs:
   using: 'composite'
   steps:
-    - name: Install lore-review
-      run: pip install lore-review
+    - name: Install lore-review from source
+      run: pip install -e .
       shell: bash
     - name: Get PR diff
       run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/lore_pr.diff
       shell: bash
-    - name: Run review
-      run: lore-review --repo ${{ inputs.repo-path }} --diff /tmp/lore_pr.diff --pr-id ${{ github.event.number }} --output json > /tmp/lore_review.json
+    - name: Run review (GitHub annotations)
+      run: |
+        lore-review \
+          --repo ${{ inputs.repo-path }} \
+          --diff /tmp/lore_pr.diff \
+          --pr-id ${{ github.event.number }} \
+          --format github \
+          --fail-on ${{ inputs.fail-on }}
+      shell: bash
+    - name: Run review (JSON for comment)
+      if: always()
+      run: |
+        lore-review \
+          --repo ${{ inputs.repo-path }} \
+          --diff /tmp/lore_pr.diff \
+          --pr-id ${{ github.event.number }} \
+          --output json \
+          --fail-on never \
+          > /tmp/lore_review.json || true
       shell: bash
     - name: Post comment
+      if: always()
       uses: actions/github-script@v7
       with:
         github-token: ${{ inputs.github-token }}
@@ -37,8 +59,13 @@ runs:
             return `| ${icon} ${f.severity.toUpperCase()} | ${f.file_path}:${f.line_start} | ${f.message} |`;
           }).join('\n');
 
+          const hasCritical = counts.critical > 0;
+          const statusLine = hasCritical ? '❌ **FAILED** — CRITICAL findings block merge.' : '✅ **PASSED** — No critical issues.';
+
           const body = [
             '## 🔍 Lore Review',
+            '',
+            statusLine,
             '',
             `**Findings:** ${findings.length} issues (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium)`,
             `**Darwin rules applied:** ${result.verdict.immunity_rules_applied}`,
