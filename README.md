@@ -85,10 +85,25 @@ Four criticals in one diff. SQL injection, command injection, a live API key, an
 
 ---
 
+## Try the live demo
+
+```bash
+git clone https://github.com/Miles0sage/lore-review-demo
+cd lore-review-demo
+bash run_demo.sh
+```
+
+See lore-review catch SQL injection, command injection, hardcoded secrets, `eval()`, `exec()`, and O(n²) in a realistic production-style agent. Real output, real cost ($0.004).
+
+---
+
 ## Install
 
 ```bash
-pip install lore-review
+# Not on PyPI yet — install from source:
+git clone https://github.com/Miles0sage/lore-review
+cd lore-review
+pip install -e .
 ```
 
 Set your model provider key (any OpenAI-compatible endpoint works):
