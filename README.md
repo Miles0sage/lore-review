@@ -128,8 +128,8 @@ lore-review pr https://github.com/owner/repo/pull/123
 # JSON output (for CI pipelines)
 lore-review scan changes.patch --output json
 
-# Fail CI on critical/high findings
-lore-review scan changes.patch --fail-on critical,high
+# Fail CI on high or above (critical, high)
+lore-review scan changes.patch --fail-on high
 ```
 
 ### GitHub Actions
@@ -154,7 +154,7 @@ Darwin fixes this at the repo level.
 
 ```
 Review 1:  Council flags "eval() usage" in tests/sandbox.py  ← false positive
-           You mark it: lore-review suppress --id FINDING_42
+           You mark it: lore-review suppress --bug-type eval_exec --reason "intentional sandbox"
 
 Review 5:  Same pattern flagged again in tests/another.py
            Darwin: 2 occurrences of same pattern → compile immunity rule
@@ -178,8 +178,8 @@ lore-review darwin export > rules.json
 # Import rules
 lore-review darwin import rules.json
 
-# Manually suppress a finding
-lore-review suppress --id FINDING_42 --reason "intentional sandbox"
+# Manually suppress a bug type
+lore-review suppress --bug-type eval_exec --reason "intentional sandbox"
 ```
 
 ---
