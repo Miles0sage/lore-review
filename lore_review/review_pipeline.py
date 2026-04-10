@@ -1,10 +1,31 @@
 """Main review pipeline: Scout → Council → Sentinel → Darwin."""
-from .models import ReviewRequest, ReviewResult, Finding
+from .models import ReviewRequest, ReviewResult, CouncilVerdict, Finding, ImmunityRule
 from .darwin_store import DarwinStore
 from .graph_reader import GraphReader
 from .agents.scout import run_scout
 from .agents.council import run_council
 from .agents.sentinel import run_sentinel, _bug_type
+
+
+def _hard_suppress(
+    findings: list[Finding], rules: list[ImmunityRule]
+) -> tuple[list[Finding], int]:
+    """Deterministically remove findings whose normalized bug_type matches a compiled immunity rule.
+
+    This is a hard filter — no AI involved. Once Darwin compiles a rule (after 2+
+    occurrences of the same bug_type being flagged and suppressed), that pattern
+    is *never* surfaced again until the rule is manually revoked.
+    """
+    if not rules:
+        return findings, 0
+    rule_patterns = {r.pattern for r in rules}
+    kept, suppressed = [], 0
+    for f in findings:
+        if _bug_type(f.message) in rule_patterns:
+            suppressed += 1
+        else:
+            kept.append(f)
+    return kept, suppressed
 
 
 def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: GraphReader = None) -> ReviewResult:
@@ -20,13 +41,24 @@ def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: G
     verdict = run_council(scout_ctx, immunity_rules)
     verdict = run_sentinel(verdict, scout_ctx)
 
-    # Record normalized bug-type patterns so Darwin can cluster across runs
-    # (raw messages vary between AI runs; bug-type is stable)
+    # Hard suppression: deterministically drop findings matching compiled immunity rules.
+    # This runs BEFORE recording — suppressed findings are not re-recorded as new misses.
+    findings_after_darwin, suppressed_count = _hard_suppress(verdict.findings, immunity_rules)
+    if suppressed_count:
+        verdict = CouncilVerdict(
+            findings=findings_after_darwin,
+            consensus_score=verdict.consensus_score,
+            cost_usd=verdict.cost_usd,
+            immunity_rules_applied=suppressed_count,
+        )
+
+    # Record normalized bug-type patterns so Darwin can cluster across runs.
+    # (raw messages vary between AI runs; bug-type key is stable)
     for finding in verdict.findings:
         normalized = Finding(
             severity=finding.severity,
             category=finding.category,
-            message=_bug_type(finding.message),  # normalize to stable key
+            message=_bug_type(finding.message),
             file_path=finding.file_path,
             line_start=finding.line_start,
         )

@@ -100,10 +100,7 @@ See lore-review catch SQL injection, command injection, hardcoded secrets, `eval
 ## Install
 
 ```bash
-# Not on PyPI yet — install from source:
-git clone https://github.com/Miles0sage/lore-review
-cd lore-review
-pip install -e .
+pip install lore-review
 ```
 
 Set your model provider key (any OpenAI-compatible endpoint works):
