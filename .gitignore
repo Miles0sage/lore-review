@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.lore-review/
+dist/
+*.egg-info/
+.pytest_cache/
