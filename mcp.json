@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lore-review": {
+      "command": "python3",
+      "args": ["-m", "lore_review.mcp_server"]
+    }
+  }
+}
