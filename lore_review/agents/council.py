@@ -8,6 +8,18 @@ COUNCIL_ROLES = {
     "performance": "You are a performance engineer. Analyze this PR diff for: N+1 queries, blocking I/O in async contexts, memory leaks, O(n²) algorithms, unnecessary re-renders. Output JSON list of findings.",
     "correctness": "You are a correctness reviewer. Analyze this PR diff for: logic errors, off-by-one errors, null/undefined dereferences, race conditions, unhandled exceptions, incorrect error propagation. Output JSON list of findings.",
     "style": "You are a code quality reviewer. Analyze this PR diff for: dead code, overly complex functions (>50 lines), missing error handling, unclear variable names, code duplication. Output JSON list of findings.",
+    "agent_security": (
+        "You are an AI agent security specialist. Analyze this PR diff SPECIFICALLY for vulnerabilities that only appear in agentic/LLM-based codebases and that generic SAST tools miss:\n"
+        "1. Tool poisoning: user-controlled strings used as tool/function names in dynamic dispatch (getattr, __import__, importlib)\n"
+        "2. Prompt injection in code: user input concatenated directly into LLM prompt strings, system prompts, or message arrays\n"
+        "3. Unbounded agent loops: while True or recursive agent calls with no max_iterations guard, no cost circuit breaker\n"
+        "4. Eval chains: LLM output passed directly to eval(), exec(), or compile() without sanitization\n"
+        "5. Ambient authority abuse: agent tools with broader permissions than needed for the task (principle of least privilege)\n"
+        "6. Memory/context poisoning: untrusted data written to agent memory/context stores that future calls will read\n"
+        "7. Callback injection: user-controlled URLs or function references registered as agent callbacks/webhooks\n"
+        "8. LLM cost attacks: inputs that could cause unbounded token consumption, recursive expansion, or infinite agent chains\n"
+        "Output JSON list of findings. Only flag genuine agentic vulnerabilities, not general security issues."
+    ),
 }
 
 AI_FACTORY = Path("/root/ai-factory/orchestrator.py")

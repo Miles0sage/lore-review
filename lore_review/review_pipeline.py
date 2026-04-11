@@ -1,10 +1,12 @@
-"""Main review pipeline: Scout → Council → Sentinel → Darwin."""
+"""Main review pipeline: Scout → [Static + Council parallel] → Sentinel → Darwin."""
+import concurrent.futures
 from .models import ReviewRequest, ReviewResult, CouncilVerdict, Finding, ImmunityRule
 from .darwin_store import DarwinStore
 from .graph_reader import GraphReader
 from .agents.scout import run_scout
 from .agents.council import run_council
 from .agents.sentinel import run_sentinel, _bug_type
+from .agents.static_scan import run_static_scan
 
 
 def _hard_suppress(
@@ -38,7 +40,23 @@ def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: G
     immunity_rules = store.get_rules(repo_id)
 
     scout_ctx = run_scout(request.pr_diff, request.repo_path, graph_reader)
-    verdict = run_council(scout_ctx, immunity_rules)
+
+    # Static scan (deterministic, zero AI cost) runs in parallel with Council
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        static_future = ex.submit(run_static_scan, request.pr_diff)
+        council_future = ex.submit(run_council, scout_ctx, immunity_rules)
+        static_findings = static_future.result()
+        verdict = council_future.result()
+
+    # Merge static findings into verdict — Sentinel will dedup overlaps
+    if static_findings:
+        verdict = CouncilVerdict(
+            findings=static_findings + list(verdict.findings),
+            consensus_score=verdict.consensus_score,
+            cost_usd=verdict.cost_usd,
+            immunity_rules_applied=verdict.immunity_rules_applied,
+        )
+
     verdict = run_sentinel(verdict, scout_ctx)
 
     # Hard suppression: deterministically drop findings matching compiled immunity rules.

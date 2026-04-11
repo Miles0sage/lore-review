@@ -12,7 +12,7 @@ class ReviewRequest(BaseModel):
 
 class Finding(BaseModel):
     severity: Literal["critical", "high", "medium", "low", "info"]
-    category: Literal["security", "performance", "style", "correctness"]
+    category: Literal["security", "performance", "style", "correctness", "agent_security", "static"]
     message: str
     file_path: str
     line_start: int = 0
