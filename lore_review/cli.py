@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .darwin_store import DarwinStore
+from .lore_config import LoreConfig
 from .models import Finding, ReviewRequest
 from .review_pipeline import review_pr
 from .agents.scaffolder import scaffold_findings
@@ -106,10 +107,13 @@ def _print_github(result):
     )
 
 
-def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffold=False, mode="full"):
+def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffold=False, mode="full", strict=False):
     diff = sys.stdin.read() if diff_path == "-" else Path(diff_path).read_text()
     request = ReviewRequest(repo_path=repo, pr_diff=diff, pr_id=pr_id)
-    result = review_pr(request, store=store, mode=mode)
+    result = review_pr(request, store=store, mode=mode, strict=strict)
+    if strict:
+        lore_path = Path(repo) / ".lore.yml"
+        print(f"[strict mode] Only .lore.yml suppressions applied ({lore_path})", file=sys.stderr)
 
     scaffolded = None
     if scaffold and result.verdict.findings:
@@ -151,12 +155,15 @@ def _add_scan_args(p):
     p.add_argument("--mode", choices=["full", "security"],
                    default="full",
                    help="full: all 5 council workers | security: security+agent_security only (lower FP rate)")
+    p.add_argument("--strict", action="store_true",
+                   help="Strict mode: only apply suppressions from .lore.yml — ignore auto-learned Darwin rules (required for CI gating)")
 
 
 def cmd_scan(args):
     _run_scan(args.diff, args.repo, args.pr_id, args.output, args.fail_on,
               scaffold=getattr(args, "scaffold", False),
-              mode=getattr(args, "mode", "full"))
+              mode=getattr(args, "mode", "full"),
+              strict=getattr(args, "strict", False))
 
 
 def cmd_pr(args):
@@ -229,7 +236,11 @@ def cmd_darwin_import(args):
 
 
 def cmd_suppress(args):
-    """Manually add an immunity rule (e.g. to suppress a confirmed false positive)."""
+    """Manually suppress a bug type — writes to both Darwin DB and .lore.yml.
+
+    .lore.yml entry is the auditable artifact for strict mode / CI gating.
+    Commit .lore.yml alongside the suppression so reviewers can audit it.
+    """
     import hashlib, sqlite3
     store = DarwinStore(db_path=Path(args.db))
     repo_id = store.repo_id_from_path(str(Path(args.repo).resolve()))
@@ -241,10 +252,27 @@ def cmd_suppress(args):
             "INSERT OR REPLACE INTO immunity_rules VALUES (?,?,?,?,?,?)",
             (rule_id, pattern, args.category, 1.0, 1, created)
         )
+
+    # Write to .lore.yml — the git-committable, PR-reviewable artifact
+    lore_cfg = LoreConfig(args.repo)
+    entry = lore_cfg.add_suppression(
+        rule_id=pattern,          # use bug-type key as rule_id in .lore.yml (human-readable)
+        file_pattern=getattr(args, "file_pattern", "*"),
+        reason=args.reason or "(no reason provided)",
+        code_snippet=getattr(args, "code_snippet", ""),
+        approved_by=getattr(args, "approved_by", "cli"),
+        category=args.category,
+    )
+
     print(f"Added immunity rule: {pattern} ({args.category})")
-    print(f"Rule ID: {rule_id}")
+    print(f"Rule ID (Darwin DB): {rule_id}")
+    print(f".lore.yml entry written: {lore_cfg.path()}")
     if args.reason:
         print(f"Reason: {args.reason}")
+    print()
+    print("Next steps:")
+    print(f"  git add {lore_cfg.path()} && git commit -m 'lore: suppress {pattern}'")
+    print("  Reviewers can audit this suppression in the PR diff.")
 
 
 def main():
@@ -290,8 +318,12 @@ def main():
     p_suppress.add_argument("--bug-type", required=True,
                             help="Normalized bug type key (e.g. sql_injection, eval_exec)")
     p_suppress.add_argument("--category", default="security",
-                            choices=["security", "performance", "correctness", "style"])
+                            choices=["security", "performance", "correctness", "style", "agent_security"])
     p_suppress.add_argument("--reason", default="", help="Reason for suppression")
+    p_suppress.add_argument("--file-pattern", default="*", dest="file_pattern",
+                            help="Scope suppression to a path prefix (e.g. 'tests/') or '*' for repo-wide")
+    p_suppress.add_argument("--approved-by", default="cli", dest="approved_by",
+                            help="GitHub username or identifier of the approver")
     _add_repo_db(p_suppress)
 
     args = parser.parse_args()

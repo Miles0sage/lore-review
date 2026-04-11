@@ -3,6 +3,7 @@ import concurrent.futures
 from .models import ReviewRequest, ReviewResult, CouncilVerdict, Finding, ImmunityRule
 from .darwin_store import DarwinStore
 from .graph_reader import GraphReader
+from .lore_config import LoreConfig
 from .agents.scout import run_scout
 from .agents.council import run_council
 from .agents.sentinel import run_sentinel, _bug_type
@@ -10,32 +11,50 @@ from .agents.static_scan import run_static_scan
 
 
 def _hard_suppress(
-    findings: list[Finding], rules: list[ImmunityRule]
+    findings: list[Finding],
+    rules: list[ImmunityRule],
+    lore_cfg: LoreConfig | None = None,
+    strict: bool = False,
 ) -> tuple[list[Finding], int]:
-    """Deterministically remove findings whose normalized bug_type matches a compiled immunity rule.
+    """Deterministically remove findings matching compiled immunity rules or .lore.yml suppressions.
 
-    This is a hard filter — no AI involved. Once Darwin compiles a rule (after 2+
-    occurrences of the same bug_type being flagged and suppressed), that pattern
-    is *never* surfaced again until the rule is manually revoked.
+    strict=True: ONLY apply suppressions from .lore.yml — auto-learned Darwin rules are ignored.
+    strict=False (default): apply both auto-learned rules AND .lore.yml suppressions.
+
+    .lore.yml suppressions are explicit, git-committed, PR-reviewable artifacts.
+    Auto-learned rules are convenient but can be gamed — use strict mode for CI gating.
     """
-    if not rules:
-        return findings, 0
-    rule_patterns = {r.pattern for r in rules}
     kept, suppressed = [], 0
+
     for f in findings:
-        if _bug_type(f.message) in rule_patterns:
+        bug_type = _bug_type(f.message)
+        drop = False
+
+        # .lore.yml suppression always takes effect (explicit human approval)
+        if lore_cfg and lore_cfg.is_suppressed(bug_type, f.file_path or ""):
+            drop = True
+
+        # Auto-learned Darwin rules only apply in non-strict mode
+        if not drop and not strict and rules:
+            rule_patterns = {r.pattern for r in rules}
+            if bug_type in rule_patterns:
+                drop = True
+
+        if drop:
             suppressed += 1
         else:
             kept.append(f)
+
     return kept, suppressed
 
 
-def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: GraphReader = None, mode: str = "full") -> ReviewResult:
+def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: GraphReader = None, mode: str = "full", strict: bool = False) -> ReviewResult:
     if store is None:
         store = DarwinStore()
     if graph_reader is None:
         graph_reader = GraphReader()
 
+    lore_cfg = LoreConfig(request.repo_path)
     repo_id = store.repo_id_from_path(request.repo_path)
     immunity_rules = store.get_rules(repo_id)
 
@@ -59,9 +78,11 @@ def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: G
 
     verdict = run_sentinel(verdict, scout_ctx)
 
-    # Hard suppression: deterministically drop findings matching compiled immunity rules.
-    # This runs BEFORE recording — suppressed findings are not re-recorded as new misses.
-    findings_after_darwin, suppressed_count = _hard_suppress(verdict.findings, immunity_rules)
+    # Hard suppression: deterministically drop findings matching compiled immunity rules or .lore.yml.
+    # strict=True → only .lore.yml (explicit human approval); strict=False → also auto-learned rules.
+    findings_after_darwin, suppressed_count = _hard_suppress(
+        verdict.findings, immunity_rules, lore_cfg=lore_cfg, strict=strict
+    )
     if suppressed_count:
         verdict = CouncilVerdict(
             findings=findings_after_darwin,
