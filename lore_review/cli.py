@@ -106,10 +106,10 @@ def _print_github(result):
     )
 
 
-def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffold=False):
+def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffold=False, mode="full"):
     diff = sys.stdin.read() if diff_path == "-" else Path(diff_path).read_text()
     request = ReviewRequest(repo_path=repo, pr_diff=diff, pr_id=pr_id)
-    result = review_pr(request, store=store)
+    result = review_pr(request, store=store, mode=mode)
 
     scaffolded = None
     if scaffold and result.verdict.findings:
@@ -148,11 +148,15 @@ def _add_scan_args(p):
                    help="Exit 1 if any finding >= this severity (default: critical)")
     p.add_argument("--scaffold", action="store_true",
                    help="Generate fix suggestions for each finding (paid tier preview)")
+    p.add_argument("--mode", choices=["full", "security"],
+                   default="full",
+                   help="full: all 5 council workers | security: security+agent_security only (lower FP rate)")
 
 
 def cmd_scan(args):
     _run_scan(args.diff, args.repo, args.pr_id, args.output, args.fail_on,
-              scaffold=getattr(args, "scaffold", False))
+              scaffold=getattr(args, "scaffold", False),
+              mode=getattr(args, "mode", "full"))
 
 
 def cmd_pr(args):

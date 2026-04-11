@@ -30,7 +30,7 @@ def _hard_suppress(
     return kept, suppressed
 
 
-def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: GraphReader = None) -> ReviewResult:
+def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: GraphReader = None, mode: str = "full") -> ReviewResult:
     if store is None:
         store = DarwinStore()
     if graph_reader is None:
@@ -44,7 +44,7 @@ def review_pr(request: ReviewRequest, store: DarwinStore = None, graph_reader: G
     # Static scan (deterministic, zero AI cost) runs in parallel with Council
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         static_future = ex.submit(run_static_scan, request.pr_diff)
-        council_future = ex.submit(run_council, scout_ctx, immunity_rules)
+        council_future = ex.submit(run_council, scout_ctx, immunity_rules, False, mode)
         static_findings = static_future.result()
         verdict = council_future.result()
 

@@ -108,11 +108,16 @@ def _run_worker(role: str, prompt: str, diff: str, immunity_rules: list) -> list
 
     return []
 
-def run_council(scout_context: dict, immunity_rules: list, dry_run: bool = False) -> CouncilVerdict:
+def run_council(scout_context: dict, immunity_rules: list, dry_run: bool = False, mode: str = "full") -> CouncilVerdict:
     """Run 4 specialist reviews in parallel via AI Factory."""
     diff = scout_context.get("diff", "")
     if dry_run or not diff.strip():
         return CouncilVerdict(findings=[], consensus_score=1.0, cost_usd=0.0, immunity_rules_applied=len(immunity_rules))
+
+    # Mode filtering: "security" only runs security+agent_security (lower FP rate on library code)
+    active_roles = COUNCIL_ROLES
+    if mode == "security":
+        active_roles = {k: v for k, v in COUNCIL_ROLES.items() if k in ("security", "agent_security")}
 
     start = time.time()
     all_findings = []
@@ -120,7 +125,7 @@ def run_council(scout_context: dict, immunity_rules: list, dry_run: bool = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
             executor.submit(_run_worker, role, prompt, diff, immunity_rules): role
-            for role, prompt in COUNCIL_ROLES.items()
+            for role, prompt in active_roles.items()
         }
         for future in concurrent.futures.as_completed(futures, timeout=120):
             try:
