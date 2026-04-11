@@ -8,6 +8,7 @@ from pathlib import Path
 from .darwin_store import DarwinStore
 from .models import Finding, ReviewRequest
 from .review_pipeline import review_pr
+from .agents.scaffolder import scaffold_findings
 
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
 
@@ -17,13 +18,15 @@ def _severity_gte(severity: str, threshold: str) -> bool:
     return order.get(severity, 99) <= order.get(threshold, 99)
 
 
-def _print_text(result):
+def _print_text(result, scaffolded=None):
     counts = {}
     for f in result.verdict.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     critical = counts.get("critical", 0)
     high = counts.get("high", 0)
     medium = counts.get("medium", 0)
+
+    scaffold_map = {id(f): fix for f, fix in scaffolded} if scaffolded else {}
 
     w = 56
     print("━" * w)
@@ -33,6 +36,11 @@ def _print_text(result):
     for f in result.verdict.findings:
         print(f"\n[{f.severity.upper()}] {f.file_path}:{f.line_start}  {f.category}")
         print(f"  {f.message}")
+        fix = scaffold_map.get(id(f))
+        if fix:
+            print(f"\n  ▶ FIX:")
+            for line in fix.splitlines():
+                print(f"    {line}")
     print("\n" + "━" * w)
     print(f"COST  ${result.total_cost_usd:.4f}  |  "
           f"Darwin rules applied: {result.verdict.immunity_rules_applied}  |  "
@@ -53,17 +61,27 @@ def _print_github(result):
     )
 
 
-def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None):
+def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffold=False):
     diff = sys.stdin.read() if diff_path == "-" else Path(diff_path).read_text()
     request = ReviewRequest(repo_path=repo, pr_diff=diff, pr_id=pr_id)
     result = review_pr(request, store=store)
 
+    scaffolded = None
+    if scaffold and result.verdict.findings:
+        scaffolded = scaffold_findings(result.verdict.findings, diff)
+
     if output_format == "json":
-        print(result.model_dump_json(indent=2))
+        if scaffolded:
+            # Inject fix suggestions into JSON output
+            data = result.model_dump()
+            fix_map = {id(f): fix for f, fix in scaffolded}
+            for i, f in enumerate(result.verdict.findings):
+                data["verdict"]["findings"][i]["fix_suggestion"] = fix_map.get(id(f), "")
+        print(json.dumps(data if scaffolded else result.model_dump(), indent=2))
     elif output_format == "github":
         _print_github(result)
     else:
-        _print_text(result)
+        _print_text(result, scaffolded=scaffolded)
 
     if fail_on != "never":
         for f in result.verdict.findings:
@@ -82,10 +100,13 @@ def _add_scan_args(p):
                    choices=["critical", "high", "medium", "low", "info", "never"],
                    default="critical",
                    help="Exit 1 if any finding >= this severity (default: critical)")
+    p.add_argument("--scaffold", action="store_true",
+                   help="Generate fix suggestions for each finding (paid tier preview)")
 
 
 def cmd_scan(args):
-    _run_scan(args.diff, args.repo, args.pr_id, args.output, args.fail_on)
+    _run_scan(args.diff, args.repo, args.pr_id, args.output, args.fail_on,
+              scaffold=getattr(args, "scaffold", False))
 
 
 def cmd_pr(args):
