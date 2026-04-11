@@ -48,6 +48,51 @@ def _print_text(result, scaffolded=None):
     print("━" * w)
 
 
+def _print_sarif(result, tool_version: str = "0.4.1"):
+    """Emit SARIF 2.1.0 — natively parsed by GitHub Code Scanning."""
+    sev_map = {"critical": "error", "high": "error", "medium": "warning", "low": "note", "info": "none"}
+    rules: dict[str, dict] = {}
+    sarif_results = []
+    for f in result.verdict.findings:
+        rule_id = f"LR-{f.category.upper()}-{f.severity.upper()}"
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "name": f"{f.category.title()}Finding",
+                "shortDescription": {"text": f"{f.category} finding ({f.severity})"},
+                "defaultConfiguration": {"level": sev_map.get(f.severity, "warning")},
+                "properties": {"tags": ["security", "lore-review", f.category]},
+            }
+        sarif_results.append({
+            "ruleId": rule_id,
+            "level": sev_map.get(f.severity, "warning"),
+            "message": {"text": f.message},
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": {"uri": f.file_path or "unknown", "uriBaseId": "%SRCROOT%"},
+                    "region": {"startLine": max(1, f.line_start or 1)},
+                }
+            }],
+            "properties": {"confidence": f.confidence, "category": f.category},
+        })
+    sarif = {
+        "version": "2.1.0",
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "lore-review",
+                    "version": tool_version,
+                    "informationUri": "https://github.com/Miles0sage/lore-review",
+                    "rules": list(rules.values()),
+                }
+            },
+            "results": sarif_results,
+        }],
+    }
+    print(json.dumps(sarif, indent=2))
+
+
 def _print_github(result):
     for f in result.verdict.findings:
         level = "error" if f.severity in ("critical", "high") else "warning"
@@ -72,7 +117,6 @@ def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffo
 
     if output_format == "json":
         if scaffolded:
-            # Inject fix suggestions into JSON output
             data = result.model_dump()
             fix_map = {id(f): fix for f, fix in scaffolded}
             for i, f in enumerate(result.verdict.findings):
@@ -80,6 +124,8 @@ def _run_scan(diff_path, repo, pr_id, output_format, fail_on, store=None, scaffo
         print(json.dumps(data if scaffolded else result.model_dump(), indent=2))
     elif output_format == "github":
         _print_github(result)
+    elif output_format == "sarif":
+        _print_sarif(result)
     else:
         _print_text(result, scaffolded=scaffolded)
 
@@ -93,7 +139,7 @@ def _add_scan_args(p):
     p.add_argument("diff", nargs="?", default="-",
                    help="Diff file path or '-' for stdin (default: stdin)")
     p.add_argument("--pr-id", default="local")
-    p.add_argument("--output", "--format", choices=["text", "json", "github"],
+    p.add_argument("--output", "--format", choices=["text", "json", "github", "sarif"],
                    default="text", dest="output", metavar="FORMAT",
                    help="Output format: text | json | github (default: text)")
     p.add_argument("--fail-on",
@@ -220,7 +266,7 @@ def main():
     # pr
     p_pr = subs.add_parser("pr", help="Review a GitHub PR by URL")
     p_pr.add_argument("url", help="GitHub PR URL")
-    p_pr.add_argument("--output", "--format", choices=["text", "json", "github"],
+    p_pr.add_argument("--output", "--format", choices=["text", "json", "github", "sarif"],
                       default="text", dest="output")
     p_pr.add_argument("--fail-on", choices=["critical", "high", "medium", "low", "info", "never"],
                       default="critical")
