@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lore-review — AI Code Security for Agent Codebases</title>
+<meta name="description" content="AI code reviewer that catches security vulnerabilities in AI agent codebases that Semgrep, Bandit, and CodeQL miss.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e1a;--bg2:#111827;--bg3:#1a2235;--bg4:#232d42;
+  --fg:#e2e8f0;--fg2:#94a3b8;--fg3:#64748b;
+  --accent:#00d4ff;--accent2:#00ff88;--accent-dim:rgba(0,212,255,.12);
+  --red:#ff4d6a;--orange:#ff8c42;--yellow:#ffd93d;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --sans:'Inter',system-ui,-apple-system,sans-serif;
+  --max:1080px;--radius:8px;
+}
+html{scroll-behavior:smooth;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.6}
+body{overflow-x:hidden}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(10,14,26,.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,.06);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
+nav .logo{font-family:var(--mono);font-weight:700;font-size:1.1rem;color:var(--accent)}
+nav .logo span{color:var(--fg2)}
+nav ul{display:flex;gap:1.5rem;list-style:none}
+nav ul a{color:var(--fg2);font-size:.85rem;font-weight:500;transition:color .2s}
+nav ul a:hover{color:var(--accent);text-decoration:none}
+@media(max-width:640px){nav ul{display:none}}
+
+/* SECTIONS */
+section{padding:6rem 1.5rem 4rem;max-width:var(--max);margin:0 auto}
+.section-label{font-family:var(--mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.15em;color:var(--accent);margin-bottom:.75rem;display:block}
+h2{font-size:2rem;font-weight:800;margin-bottom:1.25rem;line-height:1.2}
+h3{font-size:1.15rem;font-weight:600;margin-bottom:.5rem}
+
+/* HERO */
+#hero{padding-top:10rem;padding-bottom:5rem;text-align:center}
+#hero h1{font-size:clamp(1.6rem,4.5vw,2.8rem);font-weight:800;line-height:1.15;max-width:800px;margin:0 auto 1.25rem}
+#hero h1 .hl{color:var(--accent)}
+#hero .sub{font-size:1.1rem;color:var(--fg2);max-width:580px;margin:0 auto 2rem}
+.badges{display:flex;gap:.75rem;justify-content:center;margin-bottom:2rem;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:.35rem;background:var(--bg3);border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:.35rem .85rem;font-size:.8rem;color:var(--fg2);font-family:var(--mono)}
+.badge svg{width:16px;height:16px;fill:currentColor}
+.install-box{background:var(--bg2);border:1px solid rgba(255,255,255,.08);border-radius:var(--radius);max-width:520px;margin:0 auto;display:flex;align-items:center;overflow:hidden}
+.install-box code{flex:1;padding:.85rem 1.25rem;font-family:var(--mono);font-size:.9rem;color:var(--accent2);white-space:nowrap;overflow-x:auto}
+.install-box button{background:var(--accent);color:var(--bg);border:none;padding:.85rem 1.25rem;font-family:var(--mono);font-weight:700;font-size:.8rem;cursor:pointer;transition:background .2s;white-space:nowrap}
+.install-box button:hover{background:#33ddff}
+
+/* PROBLEM */
+#problem{border-top:1px solid rgba(255,255,255,.06)}
+#problem p{color:var(--fg2);max-width:700px;font-size:1.05rem;line-height:1.75}
+.attack-tags{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1.25rem}
+.attack-tags span{background:rgba(255,77,106,.1);border:1px solid rgba(255,77,106,.25);color:var(--red);font-family:var(--mono);font-size:.75rem;padding:.3rem .7rem;border-radius:4px}
+
+/* FINDINGS */
+#findings{border-top:1px solid rgba(255,255,255,.06)}
+.findings-grid{display:grid;gap:1.5rem;margin-top:1.5rem}
+.finding-card{background:var(--bg2);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);overflow:hidden}
+.finding-header{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.25rem;border-bottom:1px solid rgba(255,255,255,.06);background:var(--bg3)}
+.finding-repo{font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--fg)}
+.sev{font-family:var(--mono);font-size:.7rem;font-weight:700;padding:.2rem .6rem;border-radius:3px;text-transform:uppercase;letter-spacing:.05em}
+.sev-critical{background:rgba(255,77,106,.15);color:var(--red);border:1px solid rgba(255,77,106,.3)}
+.sev-high{background:rgba(255,140,66,.15);color:var(--orange);border:1px solid rgba(255,140,66,.3)}
+.finding-code{padding:1rem 1.25rem;font-family:var(--mono);font-size:.8rem;line-height:1.7;overflow-x:auto;color:var(--fg2)}
+.finding-code .kw{color:#c792ea}.finding-code .fn{color:#82aaff}.finding-code .str{color:#c3e88d}.finding-code .cm{color:#546e7a;font-style:italic}.finding-code .num{color:#f78c6c}.finding-code .hl-bad{color:var(--red);font-weight:700}
+.finding-bottom{padding:.75rem 1.25rem;border-top:1px solid rgba(255,255,255,.06);display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:.8rem}
+.finding-bottom div:first-child{color:var(--fg3)}
+.finding-bottom div:last-child{color:var(--accent2)}
+.finding-bottom strong{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;margin-bottom:.25rem}
+@media(max-width:500px){.finding-bottom{grid-template-columns:1fr}}
+
+/* BENCHMARK */
+#benchmark{border-top:1px solid rgba(255,255,255,.06)}
+.bench-table{width:100%;border-collapse:collapse;margin-top:1.5rem;font-size:.9rem}
+.bench-table th{text-align:left;padding:.75rem 1rem;font-family:var(--mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:var(--fg3);border-bottom:2px solid rgba(255,255,255,.08)}
+.bench-table td{padding:.75rem 1rem;border-bottom:1px solid rgba(255,255,255,.04)}
+.bench-table tr:first-child td{color:var(--accent);font-weight:600}
+.bench-table .check{color:var(--accent2)}.bench-table .cross{color:var(--red)}
+.bench-table .cost-low{color:var(--accent2)}.bench-table .cost-free{color:var(--fg3)}
+
+/* PIPELINE */
+#pipeline{border-top:1px solid rgba(255,255,255,.06)}
+.pipeline-flow{display:flex;align-items:flex-start;gap:0;margin:2rem 0;overflow-x:auto;padding-bottom:1rem}
+.pipe-step{flex:1;min-width:180px;text-align:center}
+.pipe-icon{width:56px;height:56px;border-radius:50%;background:var(--accent-dim);border:2px solid rgba(0,212,255,.3);display:flex;align-items:center;justify-content:center;margin:0 auto .75rem;font-size:1.4rem}
+.pipe-step h4{font-family:var(--mono);font-size:.85rem;color:var(--accent);margin-bottom:.35rem}
+.pipe-step p{font-size:.8rem;color:var(--fg2);padding:0 .5rem;line-height:1.5}
+.pipe-arrow{display:flex;align-items:center;padding-top:1rem;color:var(--fg3);font-size:1.2rem;min-width:24px}
+@media(max-width:700px){.pipeline-flow{flex-direction:column;align-items:center}.pipe-arrow{transform:rotate(90deg);padding:0}}
+
+/* FEATURES */
+#features{border-top:1px solid rgba(255,255,255,.06)}
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-top:1.5rem}
+.feat-card{background:var(--bg2);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);padding:1.25rem}
+.feat-card code{font-family:var(--mono);font-size:.85rem;color:var(--accent);display:block;margin-bottom:.5rem}
+.feat-card p{font-size:.85rem;color:var(--fg2);line-height:1.6}
+
+/* ENTERPRISE */
+#enterprise{border-top:1px solid rgba(255,255,255,.06)}
+.trust-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin-top:1.5rem}
+.trust-item{background:var(--bg2);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);padding:1.25rem}
+.trust-item h4{font-family:var(--mono);font-size:.85rem;color:var(--accent2);margin-bottom:.4rem}
+.trust-item p{font-size:.85rem;color:var(--fg2);line-height:1.6}
+
+/* PRICING */
+#pricing{border-top:1px solid rgba(255,255,255,.06)}
+.pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem;margin-top:1.5rem}
+.price-card{background:var(--bg2);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);padding:1.5rem;position:relative}
+.price-card.featured{border-color:rgba(0,212,255,.3);box-shadow:0 0 30px rgba(0,212,255,.08)}
+.price-name{font-family:var(--mono);font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;color:var(--fg3);margin-bottom:.5rem}
+.price-amount{font-size:1.6rem;font-weight:800;margin-bottom:.75rem}
+.price-amount span{font-size:.85rem;font-weight:400;color:var(--fg3)}
+.price-desc{font-size:.85rem;color:var(--fg2);margin-bottom:1rem;line-height:1.6}
+.price-feat{list-style:none;font-size:.8rem;color:var(--fg2)}
+.price-feat li{padding:.3rem 0;padding-left:1.2rem;position:relative}
+.price-feat li::before{content:"\2713";position:absolute;left:0;color:var(--accent2);font-weight:700}
+.cta-btn{display:inline-block;background:var(--accent);color:var(--bg);font-family:var(--mono);font-weight:700;font-size:.85rem;padding:.7rem 1.5rem;border-radius:var(--radius);margin-top:1.25rem;border:none;cursor:pointer;transition:background .2s;text-decoration:none}
+.cta-btn:hover{background:#33ddff;text-decoration:none}
+
+/* FOOTER */
+footer{border-top:1px solid rgba(255,255,255,.06);padding:3rem 1.5rem;text-align:center;color:var(--fg3);font-size:.8rem}
+footer .links{display:flex;justify-content:center;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap}
+footer .links a{color:var(--fg2);font-family:var(--mono);font-size:.8rem}
+footer .disclosure{margin-top:1rem;font-size:.75rem;color:var(--fg3)}
+
+/* GLOW */
+.glow{position:absolute;width:400px;height:400px;border-radius:50%;filter:blur(120px);opacity:.15;pointer-events:none;z-index:-1}
+.glow-1{background:var(--accent);top:-100px;left:-100px}
+.glow-2{background:#7c3aed;top:200px;right:-150px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">lore-review <span>v0.4.4</span></div>
+  <ul>
+    <li><a href="#problem">Problem</a></li>
+    <li><a href="#findings">Findings</a></li>
+    <li><a href="#benchmark">Benchmark</a></li>
+    <li><a href="#pipeline">How It Works</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+    <li><a href="https://github.com/Miles0sage/lore-review">GitHub</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section id="hero" style="position:relative">
+  <div class="glow glow-1"></div>
+  <div class="glow glow-2"></div>
+  <h1>Your SAST tool doesn't know what an agent is.<br>Your agent scanner doesn't read your code.<br><span class="hl">lore-review does both.</span></h1>
+  <p class="sub">Catches agent-specific vulnerabilities that traditional SAST tools miss entirely.</p>
+  <div class="badges">
+    <a class="badge" href="https://github.com/Miles0sage/lore-review" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <a class="badge" href="https://pypi.org/project/lore-review/" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16"><path d="M6 1v4H2V1h4zm1 0h4v4H7V1zM2 6h4v4H2V6zm5 0h4v4H7V6zM2 11h4v4H2v-4zm5 0h4v4H7v-4z"/></svg>
+      PyPI v0.4.4
+    </a>
+    <span class="badge">57 tests</span>
+    <span class="badge">$0.004/PR</span>
+  </div>
+  <div class="install-box">
+    <code id="install-cmd">pip install lore-review && lore-review scan diff.patch --mode security</code>
+    <button onclick="copyInstall()" id="copy-btn">COPY</button>
+  </div>
+</section>
+
+<!-- PROBLEM -->
+<section id="problem">
+  <span class="section-label">The Problem</span>
+  <h2>Traditional SAST was built for web apps.<br>Agents have new attack surfaces.</h2>
+  <p>AI agents introduce attack patterns that Semgrep, Bandit, and CodeQL were never designed to detect. These tools parse syntax trees. They don't understand agentic data flow -- how user input travels through tool calls, how LLM outputs become executable code, or how memory stores get poisoned.</p>
+  <div class="attack-tags">
+    <span>Tool Poisoning</span>
+    <span>Prompt Injection in Code</span>
+    <span>Eval Chains</span>
+    <span>Unbounded Loops</span>
+    <span>Memory Poisoning</span>
+    <span>Unvalidated Tool Output</span>
+    <span>Config-to-LLM Flows</span>
+  </div>
+</section>
+
+<!-- FINDINGS -->
+<section id="findings">
+  <span class="section-label">Real Findings</span>
+  <h2>Found in production agent codebases.</h2>
+  <div class="findings-grid">
+
+    <div class="finding-card">
+      <div class="finding-header">
+        <span class="finding-repo">AutoGPT</span>
+        <span class="sev sev-high">HIGH</span>
+      </div>
+      <div class="finding-code">
+<span class="kw">class</span> <span class="fn">UserConfig</span>(BaseModel):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;model_config = ConfigDict(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hl-bad">extra="allow"</span> <span class="cm"># was "forbid" &mdash; removal opens prompt injection surface</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;)
+      </div>
+      <div class="finding-bottom">
+        <div><strong>Semgrep sees</strong>Nothing. Valid Pydantic config.</div>
+        <div><strong>lore-review sees</strong>extra="forbid" removed. User-controlled fields now flow into agent prompts unchecked.</div>
+      </div>
+    </div>
+
+    <div class="finding-card">
+      <div class="finding-header">
+        <span class="finding-repo">CrewAI</span>
+        <span class="sev sev-critical">CRITICAL</span>
+      </div>
+      <div class="finding-code">
+<span class="kw">import</span> pickle<br><br>
+data = pickle.<span class="hl-bad">load</span>(open(cache_file, <span class="str">"rb"</span>))&nbsp;&nbsp;<span class="cm"># noqa: S301</span>
+      </div>
+      <div class="finding-bottom">
+        <div><strong>Bandit sees</strong>Suppressed by # noqa: S301. Skipped.</div>
+        <div><strong>lore-review sees</strong>pickle.load on agent cache file. RCE via crafted cache. noqa suppression is the vulnerability.</div>
+      </div>
+    </div>
+
+    <div class="finding-card">
+      <div class="finding-header">
+        <span class="finding-repo">Microsoft autogen</span>
+        <span class="sev sev-critical">CRITICAL</span>
+      </div>
+      <div class="finding-code">
+<span class="kw">def</span> <span class="fn">execute_code</span>(source_code, <span class="hl-bad">**kwargs</span>):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="hl-bad">exec</span>(source_code)&nbsp;&nbsp;<span class="cm"># user-provided source_code &rarr; RCE</span>
+      </div>
+      <div class="finding-bottom">
+        <div><strong>CodeQL sees</strong>exec() call. Generic warning, low confidence.</div>
+        <div><strong>lore-review sees</strong>User-provided source_code flows directly into exec(). No sandbox. Full RCE in agent runtime.</div>
+      </div>
+    </div>
+
+    <div class="finding-card">
+      <div class="finding-header">
+        <span class="finding-repo">Dify</span>
+        <span class="sev sev-high">HIGH</span>
+      </div>
+      <div class="finding-code">
+<span class="kw">def</span> <span class="fn">build_prompt</span>(config: <span class="hl-bad">dict</span>, user_input: str):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;prompt = config[<span class="str">"template"</span>].<span class="fn">format</span>(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;input=user_input, <span class="hl-bad">**config</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;)
+      </div>
+      <div class="finding-bottom">
+        <div><strong>Semgrep sees</strong>String formatting. No issue flagged.</div>
+        <div><strong>lore-review sees</strong>Unconstrained config dict unpacked into LLM prompt template. Prompt injection via config manipulation.</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- BENCHMARK -->
+<section id="benchmark">
+  <span class="section-label">Benchmark</span>
+  <h2>Detection comparison on agentic patterns.</h2>
+  <div style="overflow-x:auto">
+  <table class="bench-table">
+    <thead><tr><th>Tool</th><th>Detection Rate</th><th>Agentic Context</th><th>Cost / PR</th></tr></thead>
+    <tbody>
+      <tr><td>lore-review</td><td>8 / 10</td><td class="check">Yes</td><td class="cost-low">$0.004</td></tr>
+      <tr><td>Semgrep</td><td>3 / 10</td><td class="cross">No</td><td class="cost-free">Free</td></tr>
+      <tr><td>Bandit</td><td>2 / 10</td><td class="cross">No</td><td class="cost-free">Free</td></tr>
+      <tr><td>CodeQL</td><td>3 / 10</td><td class="cross">No</td><td class="cost-free">Free</td></tr>
+      <tr><td>CodeRabbit</td><td>5 / 10</td><td class="cross">No</td><td style="color:var(--fg2)">$20/mo</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- PIPELINE -->
+<section id="pipeline">
+  <span class="section-label">How It Works</span>
+  <h2>Four-stage review pipeline.</h2>
+  <div class="pipeline-flow">
+    <div class="pipe-step">
+      <div class="pipe-icon">S</div>
+      <h4>Static Scanner</h4>
+      <p>22 deterministic patterns. Zero AI cost. Catches eval chains, pickle loads, noqa abuse, unbounded loops.</p>
+    </div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-step">
+      <div class="pipe-icon">C</div>
+      <h4>Council</h4>
+      <p>5 specialist AI workers in parallel. $0.001 each. Security, architecture, data flow, prompt safety, dependency.</p>
+    </div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-step">
+      <div class="pipe-icon">N</div>
+      <h4>Sentinel</h4>
+      <p>Dedup and normalization. Merges overlapping findings. Assigns severity. Removes false positives.</p>
+    </div>
+    <div class="pipe-arrow">&rarr;</div>
+    <div class="pipe-step">
+      <div class="pipe-icon">D</div>
+      <h4>Darwin</h4>
+      <p>Per-repo learning via .lore.yml. Suppressions are git-committable. Enterprise audit trail built in.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <span class="section-label">Features</span>
+  <h2>Built for CI pipelines and security teams.</h2>
+  <div class="features-grid">
+    <div class="feat-card">
+      <code>--mode security</code>
+      <p>Agent-specific patterns only. Low false positive rate. Skips style and formatting noise.</p>
+    </div>
+    <div class="feat-card">
+      <code>--output sarif</code>
+      <p>GitHub Code Scanning native integration. Findings appear inline in the Security tab.</p>
+    </div>
+    <div class="feat-card">
+      <code>--strict</code>
+      <p>.lore.yml only, no auto-learn. Hard CI gating. If Darwin hasn't seen it, the build fails.</p>
+    </div>
+    <div class="feat-card">
+      <code>--scaffold</code>
+      <p>Auto-fix suggestions per finding. Generates patch-ready remediation code.</p>
+    </div>
+    <div class="feat-card">
+      <code>GitHub Actions</code>
+      <p>Inline PR comments with severity badges. REQUEST_CHANGES blocks merge on critical findings.</p>
+    </div>
+    <div class="feat-card">
+      <code>PyPI + pip</code>
+      <p>pip install lore-review. No Docker. No SaaS signup. Works offline after install.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ENTERPRISE -->
+<section id="enterprise">
+  <span class="section-label">Enterprise Trust</span>
+  <h2>Auditable suppression. Git-native governance.</h2>
+  <div class="trust-grid">
+    <div class="trust-item">
+      <h4>.lore.yml</h4>
+      <p>Git-committable, PR-reviewable suppression artifacts. Security decisions live in your repo, not a SaaS dashboard.</p>
+    </div>
+    <div class="trust-item">
+      <h4>Content-Addressed</h4>
+      <p>SHA-256 hash of the suppressed code snippet. If the code changes, the suppression expires automatically.</p>
+    </div>
+    <div class="trust-item">
+      <h4>Accountability</h4>
+      <p>approved_by and reason fields on every suppression. Full audit trail for compliance reviews.</p>
+    </div>
+    <div class="trust-item">
+      <h4>--strict Mode</h4>
+      <p>CI gating with zero auto-learn. Only .lore.yml suppressions are honored. No surprises in production.</p>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing">
+  <span class="section-label">Pricing</span>
+  <h2>Start free. Scale when you need to.</h2>
+  <div class="pricing-grid">
+    <div class="price-card">
+      <div class="price-name">Open Source</div>
+      <div class="price-amount">Free <span>forever</span></div>
+      <p class="price-desc">Full CLI and GitHub Action. No limits, no telemetry, no signup.</p>
+      <ul class="price-feat">
+        <li>pip install lore-review</li>
+        <li>All 22 static patterns</li>
+        <li>AI Council ($0.004/PR via your API key)</li>
+        <li>SARIF output</li>
+        <li>GitHub Actions integration</li>
+        <li>Community support</li>
+      </ul>
+      <a class="cta-btn" href="https://pypi.org/project/lore-review/">pip install lore-review</a>
+    </div>
+    <div class="price-card featured">
+      <div class="price-name">Assessment Report</div>
+      <div class="price-amount">$500 <span>- $2K per repo</span></div>
+      <p class="price-desc">One-time deep scan. SARIF + PDF report. We run it, you get findings.</p>
+      <ul class="price-feat">
+        <li>Full codebase scan</li>
+        <li>SARIF + PDF deliverable</li>
+        <li>Remediation guidance</li>
+        <li>Executive summary</li>
+        <li>48-hour turnaround</li>
+      </ul>
+      <a class="cta-btn" href="mailto:miles@overseerclaw.uk?subject=lore-review%20assessment">Request Assessment</a>
+    </div>
+    <div class="price-card">
+      <div class="price-name">CI Gating</div>
+      <div class="price-amount">$99 <span>- $299/mo per org</span></div>
+      <p class="price-desc">GitHub App. --strict mode. Managed .lore.yml. Blocks merges on critical findings.</p>
+      <ul class="price-feat">
+        <li>GitHub App integration</li>
+        <li>--strict CI gating</li>
+        <li>Managed suppressions</li>
+        <li>Darwin per-repo learning</li>
+        <li>Priority support</li>
+      </ul>
+      <a class="cta-btn" href="mailto:miles@overseerclaw.uk?subject=lore-review%20CI%20gating">Contact Sales</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="links">
+    <a href="https://github.com/Miles0sage/lore-review">GitHub</a>
+    <a href="https://pypi.org/project/lore-review/">PyPI</a>
+    <a href="https://github.com/Miles0sage/lore-review/issues">Issues</a>
+  </div>
+  <p>Built by Miles.</p>
+  <p class="disclosure">Found a vulnerability? <a href="https://github.com/Miles0sage/lore-review/security">File a responsible disclosure.</a></p>
+</footer>
+
+<script>
+function copyInstall(){
+  const t=document.getElementById('install-cmd').textContent;
+  navigator.clipboard.writeText(t).then(()=>{
+    const b=document.getElementById('copy-btn');
+    b.textContent='COPIED';
+    setTimeout(()=>b.textContent='COPY',2000);
+  });
+}
+
+// Smooth scroll for nav links
+document.querySelectorAll('nav a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    e.preventDefault();
+    document.querySelector(a.getAttribute('href')).scrollIntoView({behavior:'smooth'});
+  });
+});
+
+// Fade-in on scroll
+const obs=new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){e.target.style.opacity='1';e.target.style.transform='translateY(0)'}
+  });
+},{threshold:0.1});
+document.querySelectorAll('section').forEach(s=>{
+  s.style.opacity='0';s.style.transform='translateY(24px)';s.style.transition='opacity .6s ease, transform .6s ease';
+  obs.observe(s);
+});
+// Show hero immediately
+document.getElementById('hero').style.opacity='1';
+document.getElementById('hero').style.transform='translateY(0)';
+</script>
+
+</body>
+</html>

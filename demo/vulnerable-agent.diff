@@ -1,0 +1,108 @@
+diff --git a/agent/tool_executor.py b/agent/tool_executor.py
+index 3a1f2c8..b7e9d4a 100644
+--- a/agent/tool_executor.py
++++ b/agent/tool_executor.py
+@@ -1,6 +1,7 @@
+ """Tool executor — routes LLM tool-call decisions to registered handlers."""
+ import logging
+ import subprocess
++import pickle
+ from typing import Any
+
+ from agent.registry import ToolRegistry
+@@ -45,6 +46,28 @@ class ToolExecutor:
+         self.registry = ToolRegistry()
+         self.logger = logging.getLogger(__name__)
+
++    def execute_dynamic_tool(self, tool_name: str, target: object, **kwargs) -> Any:
++        """Dispatch a tool call from the LLM's function-calling output.
++
++        Looks up the method by name on the target object and invokes it.
++        """
++        handler = getattr(target, tool_name, None)
++        if handler is None:
++            raise ValueError(f"Unknown tool: {tool_name}")
++        return handler(**kwargs)
++
++    def run_shell_tool(self, command: str, working_dir: str) -> str:
++        """Execute a shell command requested by the agent's planner."""
++        result = subprocess.run(f"cd {working_dir} && {command}", shell=True, capture_output=True, text=True, timeout=30)
++        if result.returncode != 0:
++            self.logger.warning("Shell tool failed: %s", result.stderr[:200])
++        return result.stdout
++
+     def invoke(self, tool_call: dict) -> Any:
+         name = tool_call["name"]
+         args = tool_call.get("arguments", {})
+diff --git a/agent/sandbox.py b/agent/sandbox.py
+index 0e2a1d7..94c8fe3 100644
+--- a/agent/sandbox.py
++++ b/agent/sandbox.py
+@@ -1,5 +1,6 @@
+ """Sandboxed code execution for LLM-generated code blocks."""
+ import ast
++import pickle
+ import hashlib
+ import logging
+ from pathlib import Path
+@@ -22,6 +23,22 @@ class CodeSandbox:
+         self.allowed_modules = allowed_modules or ["math", "json", "re", "datetime"]
+         self.logger = logging.getLogger(__name__)
+
++    def execute_generated_code(self, code: str) -> dict:
++        """Run LLM-generated code in a restricted namespace.
++
++        Used when the agent decides to write and execute Python to solve a task.
++        """
++        namespace = {"__builtins__": {}}
++        eval(code, namespace)
++        return {"output": namespace.get("result"), "success": True}
++
++    def load_checkpoint(self, checkpoint_path: str) -> dict:
++        """Restore agent state from a serialized checkpoint file."""
++        with open(checkpoint_path, "rb") as f:
++            state = pickle.load(f)
++        self.logger.info("Restored checkpoint from %s", checkpoint_path)
++        return state
++
+     def run_safe(self, code: str, context: dict) -> dict:
+         """Execute code with AST validation."""
+         tree = ast.parse(code)
+diff --git a/agent/orchestrator.py b/agent/orchestrator.py
+index 8d3c6f1..5a0b72e 100644
+--- a/agent/orchestrator.py
++++ b/agent/orchestrator.py
+@@ -38,6 +38,30 @@ class AgentOrchestrator:
+         self.planner = PlannerAgent(model=model)
+         self.max_budget_usd = max_budget_usd
+
++    def run_autonomous_loop(self, objective: str, context: dict) -> list[dict]:
++        """Execute the agent loop until the objective is achieved.
++
++        The planner proposes actions, the executor runs them, and the critic
++        evaluates whether the objective has been met.
++        """
++        results = []
++        while True:
++            plan = self.planner.next_action(objective, context, results)
++            if plan.get("done"):
++                break
++
++            action_result = self.executor.invoke(plan["tool_call"])
++            results.append(action_result)
++
++            critic_verdict = self.critic.evaluate(objective, results)
++            if critic_verdict["satisfied"]:
++                break
++
++        return results
++
++    def build_prompt(self, user_input: str, system_context: str) -> str:
++        """Construct the full prompt for the planning LLM."""
++        prompt = f"You are a planning agent. Context: {system_context}"
++        prompt += "\n\nUser request: " + user_input + "\n\nRespond with a JSON action plan."
++        return prompt
++
+     def execute_plan(self, plan: list[dict]) -> list[dict]:
+         """Execute a pre-validated plan step by step."""
+         results = []
